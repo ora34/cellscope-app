@@ -19,12 +19,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -32,6 +35,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.drawscope.StrokeCap
+import androidx.compose.ui.graphics.Color.Companion.Green
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -46,7 +51,7 @@ import java.util.Locale
 fun MenuScreen(vm: CellViewModel) {
     val key by vm.apiKey.collectAsStateWithLifecycle()
     val credits by vm.credits.collectAsStateWithLifecycle()
-    val text by remember(key) { mutableStateOf(key) }
+    var text by remember(key) { mutableStateOf(key) }
     Column(
         modifier = Modifier.fillMaxSize(),
     ) {
@@ -104,7 +109,7 @@ fun ChartsScreen(vm: CellViewModel) {
             Text("Копим данные...", color = Color.Gray)
             return@Column
         }
-        Text("Сейчас: ${values.last()} дБм   (мин ${values.min()}, макс ${values.max()}))")
+        Text("Сейчас: ${values.last()} дБм   (мин ${values.min()}, макс ${values.max()})")
         Spacer(Modifier.height(12.dp))
         Canvas(
             Modifier.fillMaxWidth().height(24.dp)
@@ -119,7 +124,7 @@ fun ChartsScreen(vm: CellViewModel) {
                     Green,
                     Offset((i - 1) * stepX, y(values[i - 1])),
                     Offset(i * stepX, y(values[i])),
-                    strokeWidth = 5f, cap = StrokeCap.Round
+                    strokeWidth = 5f, cap = androidx.compose.ui.graphics.drawscope.StrokeCap.Round
                 )
             }
         }
@@ -144,7 +149,7 @@ fun JournalScreen(vm: CellViewModel) {
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        c.details.joinToString(" ") { "${it.first} ${it.second})" },
+                        c.details.joinToString(" ") { "${it.first} ${it.second}" },
                         fontSize = 13.sp, color = Color.DarkGray
                     )
                 }
