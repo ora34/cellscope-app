@@ -124,10 +124,14 @@ data class Tower(
     val key: String get() = "$radio|$mcc|$mnc|$cell"
 }
 
-/** Базовая станция (для LTE это все сектора одной eNB). */
+/**
+ * Базовая станция (для LTE это все сектора одной eNB).
+ * own = true: положение оценено по измерениям самого телефона, а не взято из OpenCelliD.
+ */
 data class Station(
     val key: String, val radio: String, val mcc: Int, val mnc: Int, val id: Long,
     val lat: Double, val lon: Double, val sectors: List<Int>, val range: Int,
+    val own: Boolean = false, val samples: Int = 0,
 )
 
 fun stationKey(i: Ident): String =
@@ -304,15 +308,20 @@ class LocationTracker(ctx: Context) {
 }
 
 // =====================================================================
-// Хранилище: кэш вышек, диапазоны, ключ, счётчик запросов
+// Хранилище: кэш вышек, свои измерения, диапазоны, ключ, счётчик запросов
 // =====================================================================
 
 class Storage(ctx: Context) {
     private val prefs = ctx.getSharedPreferences("cellscope", Context.MODE_PRIVATE)
     private val file = File(ctx.filesDir, "towers.json")
+    private val obsFile = File(ctx.filesDir, "obs.json")
     private val towers = LinkedHashMap<String, Tower>()
     private val tiles = HashMap<String, Int>()
     private val bands = HashMap<String, MutableSet<String>>()
+
+    /** Свои измерения: ключ станции -> список [широта, долгота, уровень дБм]. */
+    private val obs = HashMap<String, MutableList<DoubleArray>>()
+    private var obsDirty = false
 
     init {
         try {
@@ -341,6 +350,21 @@ class Storage(ctx: Context) {
                 val set = HashSet<String>()
                 for (n in 0 until a.length()) set.add(a.getString(n))
                 bands[k] = set
+            }
+        } catch (e: Exception) {
+        }
+        try {
+            if (obsFile.exists()) {
+                val o = JSONObject(obsFile.readText())
+                o.keys().forEach { k ->
+                    val a = o.getJSONArray(k)
+                    val list = ArrayList<DoubleArray>()
+                    for (n in 0 until a.length()) {
+                        val p = a.getJSONArray(n)
+                        list.add(doubleArrayOf(p.getDouble(0), p.getDouble(1), p.getDouble(2)))
+                    }
+                    obs[k] = list
+                }
             }
         } catch (e: Exception) {
         }
@@ -400,7 +424,7 @@ class Storage(ctx: Context) {
     fun setTile(key: String, count: Int) {
         tiles[key] = count
         val o = JSONObject()
-        tiles.forEach { (k, v) -> o.put(k, v) }
+        for ((k, v) in tiles) o.put(k, v)
         prefs.edit().putString("tiles", o.toString()).apply()
     }
 
@@ -413,7 +437,7 @@ class Storage(ctx: Context) {
         val set = bands.getOrPut(k) { HashSet() }
         if (!set.add(v)) return false
         val o = JSONObject()
-        bands.forEach { (key, s) -> o.put(key, JSONArray(s.toList())) }
+        for ((key, s) in bands) o.put(key, JSONArray(s.toList()))
         prefs.edit().putString("bands", o.toString()).apply()
         return true
     }
@@ -422,6 +446,79 @@ class Storage(ctx: Context) {
     fun bandsFor(mcc: Int, mnc: Int, enb: Long): List<String> =
         (bands["$mcc|$mnc|$enb"] ?: emptySet<String>())
             .sortedBy { it.substringBefore(";").toIntOrNull() ?: 0 }
+
+    // ---------- Свои измерения ----------
+
+    @Synchronized
+    fun addObs(key: String, lat: Double, lon: Double, dbm: Int) {
+        val list = obs.getOrPut(key) { ArrayList() }
+        val near = list.indexOfFirst { distanceM(it[0], it[1], lat, lon) < 25.0 }
+        if (near >= 0) {
+            if (dbm > list[near][2]) {
+                list[near] = doubleArrayOf(lat, lon, dbm.toDouble())
+                obsDirty = true
+            }
+            return
+        }
+        list.add(doubleArrayOf(lat, lon, dbm.toDouble()))
+        if (list.size > 60) {
+            var worst = 0
+            for (n in list.indices) if (list[n][2] < list[worst][2]) worst = n
+            list.removeAt(worst)
+        }
+        obsDirty = true
+    }
+
+    @Synchronized
+    fun flushObs() {
+        if (!obsDirty) return
+        obsDirty = false
+        try {
+            val o = JSONObject()
+            for ((k, list) in obs) {
+                val a = JSONArray()
+                list.forEach { p -> a.put(JSONArray().put(p[0]).put(p[1]).put(p[2])) }
+                o.put(k, a)
+            }
+            obsFile.writeText(o.toString())
+        } catch (e: Exception) {
+        }
+    }
+
+    @Synchronized
+    fun clearObs() {
+        obs.clear()
+        obsDirty = false
+        try {
+            obsFile.delete()
+        } catch (e: Exception) {
+        }
+    }
+
+    /** Ключ станции -> [широта, долгота, погрешность м, число точек]. Нужно минимум 4 точки. */
+    @Synchronized
+    fun ownEstimates(): Map<String, DoubleArray> {
+        val res = HashMap<String, DoubleArray>()
+        for ((k, list) in obs) {
+            if (list.size < 4) continue
+            val top = list.sortedByDescending { it[2] }.take(10)
+            var sw = 0.0
+            var la = 0.0
+            var lo = 0.0
+            for (o in top) {
+                val base = max(1.0, o[2] + 140.0)
+                val w = base * base
+                sw += w
+                la += o[0] * w
+                lo += o[1] * w
+            }
+            val cLat = la / sw
+            val cLon = lo / sw
+            val err = top.map { distanceM(cLat, cLon, it[0], it[1]) }.average()
+            res[k] = doubleArrayOf(cLat, cLon, max(50.0, err), list.size.toDouble())
+        }
+        return res
+    }
 }
 
 // =====================================================================
@@ -437,85 +534,4 @@ object OpenCellId {
         val c = URL(url).openConnection() as HttpURLConnection
         c.connectTimeout = 15000
         c.readTimeout = 20000
-        c.setRequestProperty("User-Agent", "CellScope/0.2")
-        try {
-            val code = c.responseCode
-            val stream = if (code in 200..299) c.inputStream else c.errorStream
-            val text = stream?.bufferedReader()?.use { it.readText() } ?: ""
-            if (code !in 200..299) {
-                throw ApiError(
-                    code,
-                    when (code) {
-                        429 -> "дневной лимит запросов исчерпан"
-                        403 -> "ключ не принят (403)"
-                        404 -> "не найдено (404)"
-                        503 -> "сервис занят, повторите позже"
-                        else -> "HTTP $code"
-                    }
-                )
-            }
-            return text
-        } finally {
-            c.disconnect()
-        }
-    }
-
-    private fun parse(o: JSONObject): Tower? = try {
-        val cell = if (o.has("cellid")) o.getLong("cellid") else o.getLong("cell")
-        Tower(
-            o.getString("radio"), o.getInt("mcc"), o.getInt("mnc"),
-            o.optInt("lac", o.optInt("tac", 0)), cell,
-            o.getDouble("lat"), o.getDouble("lon"), o.optInt("range", 0),
-        )
-    } catch (e: Exception) {
-        null
-    }
-
-    fun inArea(key: String, box: DoubleArray, mcc: Int?, mnc: Int?, offset: Int): List<Tower> {
-        val sb = StringBuilder("$BASE/cell/getInArea?key=${URLEncoder.encode(key, "UTF-8")}")
-        sb.append("&BBOX=${box[0]},${box[1]},${box[2]},${box[3]}")
-        if (mcc != null) sb.append("&mcc=$mcc")
-        if (mnc != null) sb.append("&mnc=$mnc")
-        sb.append("&limit=50&offset=$offset&format=json")
-        val o = JSONObject(get(sb.toString()))
-        val arr = o.optJSONArray("cells") ?: throw IOException(o.optString("error", "пустой ответ"))
-        return (0 until arr.length()).mapNotNull { parse(arr.getJSONObject(it)) }
-    }
-
-    fun cell(key: String, i: Ident): Tower? {
-        val url = "$BASE/cell/get?key=${URLEncoder.encode(key, "UTF-8")}" +
-                "&mcc=${i.mcc}&mnc=${i.mnc}&lac=${i.area ?: 0}&cellid=${i.cell}" +
-                "&radio=${i.radio}&format=json"
-        return try {
-            parse(JSONObject(get(url)))
-        } catch (e: ApiError) {
-            if (e.code == 404) null else throw e
-        }
-    }
-}
-
-// =====================================================================
-// ViewModel
-// =====================================================================
-
-class CellViewModel(app: Application) : AndroidViewModel(app) {
-    private val repo = CellRepository(app)
-    private val tracker = LocationTracker(app)
-    private val store = Storage(app)
-
-    private val _snapshot = MutableStateFlow<CellSnapshot?>(null)
-    val snapshot: StateFlow<CellSnapshot?> = _snapshot
-
-    private val _history = MutableStateFlow<List<CellSnapshot>>(emptyList())
-    val history: StateFlow<List<CellSnapshot>> = _history
-
-    private val _journal = MutableStateFlow<List<CellSnapshot>>(emptyList())
-    val journal: StateFlow<List<CellSnapshot>> = _journal
-
-    val location: StateFlow<Location?> = tracker.location
-
-    private val _stations = MutableStateFlow<List<Station>>(emptyList())
-    val stations: StateFlow<List<Station>> = _stations
-
-    val status = MutableStateFlow("")
-    va
+        c.setRequestProperty("User-Agent
