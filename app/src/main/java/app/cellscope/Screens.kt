@@ -35,7 +35,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.graphics.drawscope.StrokeCap
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.Color.Companion.Green
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -124,7 +124,7 @@ fun ChartsScreen(vm: CellViewModel) {
                     Green,
                     Offset((i - 1) * stepX, y(values[i - 1])),
                     Offset(i * stepX, y(values[i])),
-                    strokeWidth = 5f, cap = androidx.compose.ui.graphics.drawscope.StrokeCap.Round
+                    strokeWidth = 5f, cap = StrokeCap.Round
                 )
             }
         }
