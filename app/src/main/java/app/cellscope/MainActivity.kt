@@ -74,7 +74,7 @@ data class CellSnapshot(val time: Long, val cells: List<CellRow>) {
 }
 
 private fun Any?.s(): String = this?.toString() ?: "—"
-private fun Int?.dbm(): String = this?.let { "$it дБм" } ?: "—"
+private fun Number?.dbm(): String = this?.let { "${it.toInt()} дБм" } ?: "—"
 
 class CellRepository(context: Context) {
     private val netMonster = NetMonsterFactory.get(context.applicationContext)
@@ -122,9 +122,10 @@ class CellRepository(context: Context) {
                 ),
             )
             is CellLte -> CellRow(
-                "4G", isServing, plmn, bandName, channel, pci, signal.rsrp,
+                "4G", isServing, plmn, bandName, channel, pci, signal.rsrp?.toInt(),
                 listOf(
-                    "ECI" to eci.s(), "eNB" to eNb.s(), "CID" to cid.s(), "TAC" to tac.s(),
+                    "ECI" to eci.s(), "eNB" to eci?.let { it shr 8 }.s(),
+                    "CID" to cid.s(), "TAC" to tac.s(),
                     "PCI" to pci.s(), "EARFCN" to channel.s(),
                     "RSRP" to signal.rsrp.dbm(),
                     "RSRQ" to (signal.rsrq?.let { "$it дБ" } ?: "—"),
