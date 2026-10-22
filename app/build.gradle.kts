@@ -12,8 +12,8 @@ android {
         applicationId = "app.cellscope"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1"
+        versionCode = 2
+        versionName = "0.2"
     }
 
     buildTypes {
@@ -35,6 +35,7 @@ android {
 
 dependencies {
     implementation("app.netmonster:core:1.3.0")
+    implementation("org.osmdroid:osmdroid-android:6.1.18")
 
     implementation(platform("androidx.compose:compose-bom:2024.09.00"))
     implementation("androidx.compose.ui:ui")
